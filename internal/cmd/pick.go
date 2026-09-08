@@ -119,17 +119,22 @@ what is not yet on your Todoist plate.`,
 				return nil
 			}
 
-			confirmed, err := tui.ConfirmPush(len(picked), project.Display)
-			if err != nil {
-				if errors.Is(err, tui.ErrAborted) {
-					fmt.Fprintln(out, "Aborted; nothing was pushed.")
+			// [pick].confirm = false pushes straight from the picker. The
+			// summary below still prints either way, since with the screen gone
+			// it is the only feedback that anything happened.
+			if a.cfg.ConfirmPick() {
+				confirmed, err := tui.ConfirmPush(len(picked), project.Display)
+				if err != nil {
+					if errors.Is(err, tui.ErrAborted) {
+						fmt.Fprintln(out, "Aborted; nothing was pushed.")
+						return nil
+					}
+					return err
+				}
+				if !confirmed {
+					fmt.Fprintln(out, "Cancelled; nothing was pushed.")
 					return nil
 				}
-				return err
-			}
-			if !confirmed {
-				fmt.Fprintln(out, "Cancelled; nothing was pushed.")
-				return nil
 			}
 
 			results, pushErr := a.push(ctx, picked, pushOptions{Project: project, Revive: revive})

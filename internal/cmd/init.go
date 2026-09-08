@@ -104,6 +104,10 @@ func scaffold(projectNames []string) string {
 		}
 	}
 
+	b.WriteString("\n[pick]\n")
+	b.WriteString("# Ask before pushing the issues you selected. Set to false to push straight away.\n")
+	b.WriteString("# confirm = true\n")
+
 	b.WriteString("\n# Per-checkout mapping. An entry matches when the current working directory\n")
 	b.WriteString("# is inside `path`; when several match, the longest path wins.\n")
 	b.WriteString("# `path` supports ~ expansion.\n")

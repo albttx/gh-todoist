@@ -417,7 +417,12 @@ func TestScaffoldIsValidTOMLAndDocumentsPrecedence(t *testing.T) {
 	if cfg.Token() != "" && cfg.Todoist.APIToken != "" {
 		t.Error("the scaffold must never write a token")
 	}
-	for _, want := range []string{"TODOIST_API_TOKEN", "Chores 🧹", "Work", "[projects.", "longest path wins"} {
+	// The scaffold ships confirm commented out, so the generated file must
+	// still resolve to the default rather than silently turning it off.
+	if !cfg.ConfirmPick() {
+		t.Error("the scaffolded config disables the pick confirmation")
+	}
+	for _, want := range []string{"TODOIST_API_TOKEN", "Chores 🧹", "Work", "[projects.", "longest path wins", "[pick]", "confirm"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("scaffold is missing %q", want)
 		}

@@ -60,6 +60,9 @@ label = "gh"                    # applied to every task; also how sync finds the
                                 # again, so changing it orphans existing tasks
 default_project = "Work"        # optional fallback, by name
 
+[pick]
+confirm = true                  # false pushes straight from the picker
+
 # Mapping is keyed by local checkout path, not by owner/repo. An entry matches
 # when the working directory is inside `path`; longest path wins. ~ expands.
 [projects.myrepo]

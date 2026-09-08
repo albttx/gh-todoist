@@ -26,6 +26,7 @@ const EnvProject = "TODOIST_PROJECT"
 // Config is the parsed contents of config.toml.
 type Config struct {
 	Todoist  Todoist            `toml:"todoist"`
+	Pick     Pick               `toml:"pick"`
 	Projects map[string]Project `toml:"projects"`
 
 	// Path records where the config was loaded from. Empty if no file existed.
@@ -37,6 +38,14 @@ type Todoist struct {
 	APIToken       string `toml:"api_token"`
 	Label          string `toml:"label"`
 	DefaultProject string `toml:"default_project"`
+}
+
+// Pick holds the [pick] table.
+type Pick struct {
+	// Confirm is a pointer so that an absent key stays distinguishable from an
+	// explicit "confirm = false". A plain bool would decode both as false and
+	// silently turn the default off. Read it through Config.ConfirmPick.
+	Confirm *bool `toml:"confirm"`
 }
 
 // Project is a single [projects.NAME] table mapping a local checkout to a
@@ -107,6 +116,16 @@ func (c *Config) TokenSource() string {
 		return "[todoist].api_token"
 	}
 	return ""
+}
+
+// ConfirmPick reports whether `pick` should ask before pushing. Confirming is
+// the default: pushing is the one irreversible thing this tool does, so it is
+// opt-out rather than opt-in.
+func (c *Config) ConfirmPick() bool {
+	if c.Pick.Confirm == nil {
+		return true
+	}
+	return *c.Pick.Confirm
 }
 
 // Label returns the label applied to every synced task.

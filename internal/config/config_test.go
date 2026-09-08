@@ -306,3 +306,73 @@ func TestResolveProjectFlagIsAmbiguous(t *testing.T) {
 		t.Error("a --project value must be marked as possibly-an-id so lookup can fall back")
 	}
 }
+
+// TestConfirmPick covers the three states a defaulted-true boolean has to keep
+// apart. A plain bool field would collapse the first two, silently disabling a
+// confirmation the user never asked to lose.
+func TestConfirmPick(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "no [pick] table at all",
+			body: "[todoist]\nlabel = \"gh\"\n",
+			want: true,
+		},
+		{
+			name: "[pick] present but empty",
+			body: "[pick]\n",
+			want: true,
+		},
+		{
+			name: "explicitly on",
+			body: "[pick]\nconfirm = true\n",
+			want: true,
+		},
+		{
+			name: "explicitly off",
+			body: "[pick]\nconfirm = false\n",
+			want: false,
+		},
+		{
+			name: "empty file",
+			body: "",
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := writeConfig(t, tt.body)
+			if got := cfg.ConfirmPick(); got != tt.want {
+				t.Errorf("ConfirmPick() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfirmPickDefaultsOnWithNoConfigFile(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.ConfirmPick() {
+		t.Error("ConfirmPick() = false with no config file, want true")
+	}
+}
+
+// TestConfirmPickOffIsNotAParseArtifact guards the distinction directly: the
+// decoded pointer must be non-nil only when the key was actually written.
+func TestConfirmPickOffIsNotAParseArtifact(t *testing.T) {
+	if cfg := writeConfig(t, "[todoist]\nlabel = \"gh\"\n"); cfg.Pick.Confirm != nil {
+		t.Errorf("Pick.Confirm = %v, want nil when the key is absent", *cfg.Pick.Confirm)
+	}
+	cfg := writeConfig(t, "[pick]\nconfirm = false\n")
+	if cfg.Pick.Confirm == nil {
+		t.Fatal("Pick.Confirm = nil, want a decoded false")
+	}
+	if *cfg.Pick.Confirm {
+		t.Error("Pick.Confirm = true, want false")
+	}
+}
