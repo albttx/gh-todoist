@@ -16,13 +16,11 @@ import (
 // ErrAborted is returned when the user quits a form without confirming.
 var ErrAborted = errors.New("aborted")
 
-// pickerHint and confirmHint are appended to the form descriptions, because huh
-// builds its help line from the focused field's own key bindings and the
-// form-level quit binding never appears there.
-const (
-	pickerHint  = "/ filter · esc leaves the filter, then quits · ctrl+c quit"
-	confirmHint = "esc or ctrl+c to quit without pushing"
-)
+// confirmHint is appended to the confirm form's description, because huh builds
+// its help line from the focused field's own key bindings and the form-level
+// quit binding never appears there. The picker's equivalent is modal and lives
+// on keyPlan.Hint.
+const confirmHint = "esc or ctrl+c to quit without pushing"
 
 // setEscQuits rebuilds the form-level quit binding to include Esc, or not.
 //
@@ -48,45 +46,94 @@ func defaultProgramOptions() []tea.ProgramOption {
 	}
 }
 
-// escCascade tracks how far along Esc's three stages the picker is, so that Esc
-// means what huh's own help line says it means at that moment.
+// keyPlan is how the picker should treat one keypress, and what the hint line
+// should say once it has been handled.
+type keyPlan struct {
+	// EscQuits is whether the form-level quit binding should include Esc.
+	EscQuits bool
+	// EnterToggles is whether this Enter selects the highlighted issue instead
+	// of submitting the form.
+	EnterToggles bool
+	// Hint describes the state this key leaves behind.
+	Hint string
+}
+
+// pickerMode mirrors just enough of huh's MultiSelect state to make Esc and
+// Enter mean what the hint line says they mean.
 //
-// The stages are: leave the filter input, clear the filter, quit. Only the first
-// is observable through huh's exported API (MultiSelect.GetFiltering), so the
-// length of the filter text is mirrored from the key stream to tell the last two
-// apart. Without this the help line would lie: huh offers "esc clear filter" in
-// a state where an unconditional quit binding would exit the picker instead.
-type escCascade struct {
+// Both keys are modal. Esc runs a three-stage cascade — leave the filter input,
+// clear the filter, quit — and Enter selects while a filter is narrowing the
+// list but pushes when it is not. Only the first of those distinctions is
+// observable through huh's exported API (MultiSelect.GetFiltering), so the
+// length of the filter text is mirrored from the key stream to recover the rest.
+// Without it the picker would silently push when the user meant to select.
+type pickerMode struct {
 	filterLen int
 }
 
-// onKey folds one key into the cascade and reports whether Esc should quit the
-// form right now. filtering is the field's state before the key is applied.
-func (e *escCascade) onKey(k tea.KeyMsg, filtering bool) (escQuits bool) {
+// filtering means the filter input has focus and is swallowing keystrokes.
+// filterActive means a filter is narrowing the list, whether or not it has focus.
+func (p *pickerMode) filterActive() bool { return p.filterLen > 0 }
+
+// onKey folds one key into the mode and reports how to treat it. filtering is
+// huh's state before the key is applied.
+func (p *pickerMode) onKey(k tea.KeyMsg, filtering bool) keyPlan {
+	// Both decisions are read off the state as it stands before this key.
+	plan := keyPlan{
+		EscQuits:     !filtering && !p.filterActive(),
+		EnterToggles: k.Type == tea.KeyEnter && !filtering && p.filterActive(),
+	}
+
 	switch k.Type {
 	case tea.KeyEsc:
-		// Quit only from the last stage: not typing, and nothing filtered.
-		quits := !filtering && e.filterLen == 0
-		if !filtering && e.filterLen > 0 {
-			e.filterLen = 0 // huh is about to clear the filter
+		if !filtering && p.filterActive() {
+			p.filterLen = 0 // huh is about to clear the filter
 		}
-		return quits
 	case tea.KeyRunes:
 		if filtering {
-			e.filterLen += len(k.Runes)
+			p.filterLen += len(k.Runes)
 		}
 	case tea.KeySpace:
 		if filtering {
-			e.filterLen++
+			p.filterLen++
 		}
 	case tea.KeyBackspace, tea.KeyDelete:
-		if filtering && e.filterLen > 0 {
-			e.filterLen--
+		if filtering && p.filterLen > 0 {
+			p.filterLen--
 		}
 	}
-	// Any other key leaves the cascade where it was; Esc keeps its current
-	// meaning, which is "quit" whenever no filter is in play.
-	return !filtering && e.filterLen == 0
+
+	plan.Hint = hintFor(afterFiltering(k, filtering), p.filterActive())
+	return plan
+}
+
+// afterFiltering reports whether the filter input still has focus once this key
+// has been handled, so the hint can describe the state the user is about to see
+// rather than the one they just left.
+func afterFiltering(k tea.KeyMsg, filtering bool) bool {
+	switch {
+	case filtering && (k.Type == tea.KeyEsc || k.Type == tea.KeyEnter || k.Type == tea.KeyDown):
+		// huh's SetFilter: hand focus back to the list, keeping the filter.
+		return false
+	case !filtering && k.Type == tea.KeyRunes && string(k.Runes) == "/":
+		// huh's Filter: focus the filter input.
+		return true
+	default:
+		return filtering
+	}
+}
+
+// hintFor renders the hint line for a state. Enter is modal, so saying which of
+// the two things it does right now is the whole point of this line.
+func hintFor(filtering, filterActive bool) string {
+	switch {
+	case filtering:
+		return "type to filter · ↓/esc back to the list · ctrl+c quit"
+	case filterActive:
+		return "enter/space select · esc clears the filter · ctrl+c quit"
+	default:
+		return "enter push · space select · / filter · esc quit"
+	}
 }
 
 // SelectIssues presents a multi-select over issues and returns the chosen ones
@@ -111,7 +158,6 @@ func SelectIssues(title, description string, issues []ghsrc.Issue) ([]ghsrc.Issu
 	var chosen []int
 	multi := huh.NewMultiSelect[int]().
 		Title(title).
-		Description(description + "\n" + pickerHint).
 		Options(options...).
 		// The option key is the whole rendered line, "owner/repo#N  title", so
 		// typing either a ref fragment or a word from the title narrows the list.
@@ -119,28 +165,47 @@ func SelectIssues(title, description string, issues []ghsrc.Issue) ([]ghsrc.Issu
 		Height(min(len(options)+4, 20)).
 		Value(&chosen)
 
+	var mode pickerMode
+	setHint := func(plan keyPlan) {
+		multi.Description(description + "\n" + plan.Hint)
+	}
+	setHint(keyPlan{Hint: hintFor(false, false)})
+
 	km := huh.NewDefaultKeyMap()
 	setEscQuits(km, true)
+	// Down leaves the filter input for the list, keeping the filter applied.
+	// huh enables SetFilter only while the filter input has focus and
+	// key.Matches ignores disabled bindings, so Down still scrolls the list at
+	// every other moment.
+	km.MultiSelect.SetFilter = key.NewBinding(
+		key.WithKeys("enter", "esc", "down"),
+		key.WithHelp("↓/esc", "back to the list"),
+		key.WithDisabled(),
+	)
 
-	// Esc cascades exactly the way huh's own help line advertises it: leave the
-	// filter input, then clear the filter, then quit. Only the first of those
-	// three is visible through the exported API (GetFiltering), so the length of
-	// the filter text is mirrored from the key stream to tell the other two
-	// apart. Getting this wrong would make the help line lie — it offers "esc
-	// clear filter" in a state where an unconditional quit binding would instead
-	// exit the picker.
-	var cascade escCascade
-	escFilter := func(_ tea.Model, msg tea.Msg) tea.Msg {
-		if k, ok := msg.(tea.KeyMsg); ok {
-			// GetFiltering reports the state before this key is applied.
-			setEscQuits(km, cascade.onKey(k, multi.GetFiltering()))
+	// Rebind Esc and reinterpret Enter for each keypress, just before huh sees
+	// it. The field's own keymap is copied by value when the form is built, so
+	// it cannot be rebound from out here; rewriting the message is what makes
+	// Enter modal.
+	modal := func(_ tea.Model, msg tea.Msg) tea.Msg {
+		k, ok := msg.(tea.KeyMsg)
+		if !ok {
+			return msg
+		}
+		// GetFiltering reports the state before this key is applied.
+		plan := mode.onKey(k, multi.GetFiltering())
+		setEscQuits(km, plan.EscQuits)
+		setHint(plan)
+		if plan.EnterToggles {
+			// huh's Toggle binding is " " and "x"; KeySpace stringifies to " ".
+			return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 		}
 		return msg
 	}
 
 	form := huh.NewForm(huh.NewGroup(multi)).
 		WithKeyMap(km).
-		WithProgramOptions(append(defaultProgramOptions(), tea.WithFilter(escFilter))...)
+		WithProgramOptions(append(defaultProgramOptions(), tea.WithFilter(modal))...)
 
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
