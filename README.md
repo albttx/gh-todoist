@@ -41,7 +41,7 @@ gh todoist sync            # complete tasks whose issues have closed
 | Command | What it does |
 |---|---|
 | `add [ref...]` | Push specific issues, in one batched call. A ref is `812`, `owner/repo#812`, or a full issue URL. |
-| `pick` | Interactive multi-select over a repo's open issues (assigned to you when outside a repo). `--assign[=user]` filters by assignee. Already-tracked ones are hidden. |
+| `pick` | Interactive multi-select over a repo's open issues (assigned to you when outside a repo). `/` filters as you type, `esc` backs out then quits. `--assign[=user]` filters by assignee. Already-tracked ones are hidden. |
 | `sync` | Complete Todoist tasks whose issues closed on GitHub, and tombstone tasks you completed in Todoist. |
 | `status` | Read-only drift report plus config diagnosis: token found, which config layer wins, what it resolves to. |
 | `init` | Create `config.toml` if absent, seeded with your live Todoist project names as comments. |
