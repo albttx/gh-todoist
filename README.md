@@ -31,7 +31,7 @@ holds. From source: `go build -o gh-todoist ./cmd/gh-todoist && gh extension ins
 gh todoist init            # write ~/.config/gh-todoist/config.toml
 gh todoist status          # check the token and project resolution
 cd ~/src/some-repo
-gh todoist pick            # choose from your assigned open issues
+gh todoist pick            # choose from the repo's open issues
 gh todoist add 812         # or push one issue directly
 gh todoist sync            # complete tasks whose issues have closed
 ```
@@ -41,7 +41,7 @@ gh todoist sync            # complete tasks whose issues have closed
 | Command | What it does |
 |---|---|
 | `add [ref...]` | Push specific issues, in one batched call. A ref is `812`, `owner/repo#812`, or a full issue URL. |
-| `pick` | Interactive multi-select over your open assigned issues. Already-tracked ones are hidden. |
+| `pick` | Interactive multi-select over a repo's open issues (assigned to you when outside a repo). `--assign[=user]` filters by assignee. Already-tracked ones are hidden. |
 | `sync` | Complete Todoist tasks whose issues closed on GitHub, and tombstone tasks you completed in Todoist. |
 | `status` | Read-only drift report plus config diagnosis: token found, which config layer wins, what it resolves to. |
 | `init` | Create `config.toml` if absent, seeded with your live Todoist project names as comments. |

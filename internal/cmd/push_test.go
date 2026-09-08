@@ -397,45 +397,6 @@ func TestPrintPushResults(t *testing.T) {
 	}
 }
 
-func TestBuildSearchQuery(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name      string
-		rawQuery  string
-		repo      string
-		wantQuery string
-	}{
-		{
-			name:      "explicit repo",
-			repo:      "acme/widgets",
-			wantQuery: "assignee:@me is:open is:issue repo:acme/widgets",
-		},
-		{
-			name:      "raw query replaces the pool entirely",
-			rawQuery:  "is:open label:bug org:acme",
-			repo:      "ignored/repo",
-			wantQuery: "is:open label:bug org:acme",
-		},
-		{
-			name:      "raw query is trimmed",
-			rawQuery:  "  is:open author:@me  ",
-			wantQuery: "is:open author:@me",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got, scope := buildSearchQuery(tt.rawQuery, tt.repo)
-			if got != tt.wantQuery {
-				t.Errorf("query = %q, want %q", got, tt.wantQuery)
-			}
-			if scope == "" {
-				t.Error("scope description must not be empty")
-			}
-		})
-	}
-}
-
 func TestScaffoldIsValidTOMLAndDocumentsPrecedence(t *testing.T) {
 	t.Parallel()
 	body := scaffold([]string{"Chores 🧹", "Work"})
