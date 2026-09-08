@@ -1,0 +1,25 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Cross-compiles for every platform gh supports and attaches the binaries
+      # to the tag, which is what `gh extension install` expects.
+      - uses: cli/gh-extension-precompile@v2
+        with:
+          go_version_file: go.mod
+          # The action defaults to building the repository root. This binary's
+          # main package lives in ./cmd/gh-todoist, and go_build_options is
+          # appended verbatim as the final argument of the `go build` the action
+          # runs, which is exactly where the package path belongs.
+          go_build_options: ./cmd/gh-todoist

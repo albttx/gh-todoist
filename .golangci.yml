@@ -1,0 +1,20 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck      # unchecked errors — the whole tool is about not silently diverging
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unused
+
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Output formatting is best-effort; a failed write to a closed stdout is
+      # not something any of these commands can act on.
+      - linters: [errcheck]
+        source: "^\\s*fmt\\.Fprint"
