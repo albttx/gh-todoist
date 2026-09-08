@@ -113,7 +113,9 @@ what is not yet on your Todoist plate.`,
 				return err
 			}
 			if len(picked) == 0 {
-				fmt.Fprintln(out, "Nothing selected.")
+				// Submitting now falls back to the highlighted issue, so an
+				// empty result means there was nothing to highlight.
+				fmt.Fprintln(out, "No issue highlighted; nothing to push.")
 				return nil
 			}
 

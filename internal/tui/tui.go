@@ -241,6 +241,17 @@ func SelectIssues(title, description string, issues []ghsrc.Issue) ([]ghsrc.Issu
 		return nil, fmt.Errorf("issue picker: %w", err)
 	}
 
+	// Submitting without ticking anything means the highlighted issue, the way
+	// fzf treats its cursor. Filtering down to one issue and pressing Enter is
+	// the common case, and making that a dead end taught people to press an
+	// extra key for no reason.
+	if len(chosen) == 0 {
+		if hovered, ok := multi.Hovered(); ok {
+			return []ghsrc.Issue{issues[hovered]}, nil
+		}
+		return nil, nil // nothing highlighted: the list is empty
+	}
+
 	// chosen carries indices in selection order; restore display order so the
 	// push output reads the same way the list did.
 	picked := make([]ghsrc.Issue, 0, len(chosen))
