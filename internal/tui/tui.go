@@ -54,8 +54,6 @@ type keyPlan struct {
 	// EnterToggles is whether this Enter selects the highlighted issue instead
 	// of submitting the form.
 	EnterToggles bool
-	// Hint describes the state this key leaves behind.
-	Hint string
 }
 
 // pickerMode mirrors just enough of huh's MultiSelect state to make Esc and
@@ -103,8 +101,30 @@ func (p *pickerMode) onKey(k tea.KeyMsg, filtering bool) keyPlan {
 		}
 	}
 
-	plan.Hint = hintFor(afterFiltering(k, filtering), p.filterActive())
 	return plan
+}
+
+// splitFilterBurst detects a "/" that arrived glued to the text meant for the
+// filter, and splits it back apart.
+//
+// A terminal hands bubbletea every rune it read in one syscall as a single
+// KeyRunes message, so typing "/docs" quickly — or typing it at all while the
+// picker is still loading, which buffers the keystrokes — arrives as one key
+// whose String() is "/docs". huh's filter binding matches the literal "/" and
+// nothing else, so the filter silently never opened: the runes went nowhere,
+// the list stayed unfiltered, and the next Enter submitted an empty selection.
+//
+// It returns the "/" to deliver, and the runes that were glued to it. Those
+// runes cannot be forwarded — huh's filter input is unexported and ignores
+// synthesised key messages — so the caller drops them and the filter opens
+// empty. That is a visible prompt the user can retype into, rather than a
+// keystroke that vanishes.
+func splitFilterBurst(k tea.KeyMsg, filtering bool) (start tea.KeyMsg, rest []rune, ok bool) {
+	if filtering || k.Type != tea.KeyRunes || len(k.Runes) < 2 || k.Runes[0] != '/' {
+		return k, nil, false
+	}
+	rest = append(rest, k.Runes[1:]...)
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}}, rest, true
 }
 
 // afterFiltering reports whether the filter input still has focus once this key
@@ -125,16 +145,14 @@ func afterFiltering(k tea.KeyMsg, filtering bool) bool {
 
 // hintFor renders the hint line for a state. Enter is modal, so saying which of
 // the two things it does right now is the whole point of this line.
-func hintFor(filtering, filterActive bool) string {
-	switch {
-	case filtering:
-		return "type to filter · ↓/esc back to the list · ctrl+c quit"
-	case filterActive:
-		return "enter/space select · esc clears the filter · ctrl+c quit"
-	default:
-		return "enter push · space select · / filter · esc quit"
-	}
-}
+// pickerHint describes both Enter modes at once.
+//
+// It is deliberately static: huh renders a field's description from the value
+// it held when the form was built and does not pick up later mutations, so a
+// hint that claimed to track the mode would freeze on its first value and lie
+// about the other. One line that is true in every state beats a live one that
+// is only true at the start.
+const pickerHint = "/ filter · enter selects while filtered, otherwise pushes · esc back, then quits"
 
 // SelectIssues presents a multi-select over issues and returns the chosen ones
 // in the order they were displayed.
@@ -165,11 +183,9 @@ func SelectIssues(title, description string, issues []ghsrc.Issue) ([]ghsrc.Issu
 		Height(min(len(options)+4, 20)).
 		Value(&chosen)
 
+	multi.Description(description + "\n" + pickerHint)
+
 	var mode pickerMode
-	setHint := func(plan keyPlan) {
-		multi.Description(description + "\n" + plan.Hint)
-	}
-	setHint(keyPlan{Hint: hintFor(false, false)})
 
 	km := huh.NewDefaultKeyMap()
 	setEscQuits(km, true)
@@ -192,10 +208,21 @@ func SelectIssues(title, description string, issues []ghsrc.Issue) ([]ghsrc.Issu
 		if !ok {
 			return msg
 		}
+
 		// GetFiltering reports the state before this key is applied.
-		plan := mode.onKey(k, multi.GetFiltering())
+		filtering := multi.GetFiltering()
+		if start, _, split := splitFilterBurst(k, filtering); split {
+			// Open the filter with the "/" alone. The runes glued to it are
+			// dropped: huh's filter input is unexported and rejects synthesised
+			// key messages, so there is no way to hand them over after the fact.
+			// An empty filter the user can see and retype into beats silently
+			// swallowing the keystroke, which is what shipped in v1.3.0.
+			k = start
+			msg = start
+		}
+
+		plan := mode.onKey(k, filtering)
 		setEscQuits(km, plan.EscQuits)
-		setHint(plan)
 		if plan.EnterToggles {
 			// huh's Toggle binding is " " and "x"; KeySpace stringifies to " ".
 			return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}

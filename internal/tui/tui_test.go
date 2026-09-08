@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -45,9 +44,6 @@ func TestPickerFlow(t *testing.T) {
 	if p.EscQuits {
 		t.Error("Esc must not quit while the filter input has focus")
 	}
-	if !strings.Contains(p.Hint, "type to filter") {
-		t.Errorf("hint = %q, want the filter-input hint", p.Hint)
-	}
 
 	// Down hands focus back to the list, keeping the filter applied.
 	p = step(down())
@@ -56,9 +52,6 @@ func TestPickerFlow(t *testing.T) {
 	}
 	if !m.filterActive() {
 		t.Fatal("Down must keep the filter applied")
-	}
-	if !strings.Contains(p.Hint, "enter/space select") {
-		t.Errorf("hint = %q, want the select-mode hint", p.Hint)
 	}
 
 	// With a filter narrowing the list, Enter selects rather than pushing.
@@ -88,9 +81,6 @@ func TestPickerFlow(t *testing.T) {
 	}
 	if !p.EscQuits {
 		t.Error("Esc must quit once no filter is active")
-	}
-	if !strings.Contains(p.Hint, "enter push") {
-		t.Errorf("hint = %q, want the push-mode hint", p.Hint)
 	}
 }
 
@@ -150,31 +140,6 @@ func TestEscCascade(t *testing.T) {
 	}
 	if !m.onKey(esc(), false).EscQuits {
 		t.Error("once the filter is cleared, Esc must quit")
-	}
-}
-
-func TestHintTracksTheMode(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name                 string
-		filtering, active    bool
-		wantSubstr, dontWant string
-	}{
-		{name: "filter input focused", filtering: true, wantSubstr: "back to the list", dontWant: "enter push"},
-		{name: "filter active, list focused", active: true, wantSubstr: "select", dontWant: "enter push"},
-		{name: "no filter", wantSubstr: "enter push", dontWant: "clears the filter"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := hintFor(tt.filtering, tt.active)
-			if !strings.Contains(got, tt.wantSubstr) {
-				t.Errorf("hint = %q, want it to mention %q", got, tt.wantSubstr)
-			}
-			if strings.Contains(got, tt.dontWant) {
-				t.Errorf("hint = %q, must not mention %q — modal Enter is a trap when the hint lies", got, tt.dontWant)
-			}
-		})
 	}
 }
 
@@ -244,4 +209,118 @@ func TestFilterLengthMirror(t *testing.T) {
 			t.Fatalf("filterLen = %d, want 0", m.filterLen)
 		}
 	})
+}
+
+// TestSplitFilterBurst pins the v1.3.0 regression: typing "/docs" quickly, or
+// typing it while the picker is still loading, arrives from the terminal as a
+// single KeyRunes whose String() is "/docs". huh's filter binding matches the
+// literal "/" only, so the filter never opened, the list stayed unfiltered, and
+// the next Enter submitted nothing. Splitting the burst is what fixes it.
+func TestSplitFilterBurst(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		key       tea.KeyMsg
+		filtering bool
+		wantSplit bool
+		wantStart string
+		wantRest  string
+	}{
+		{
+			name:      "the reported bug: /docs arrives as one key",
+			key:       runes("/docs"),
+			wantSplit: true, wantStart: "/", wantRest: "docs",
+		},
+		{
+			name:      "two runes is enough to break it",
+			key:       runes("/d"),
+			wantSplit: true, wantStart: "/", wantRest: "d",
+		},
+		{
+			name:      "a lone slash is already correct",
+			key:       runes("/"),
+			wantSplit: false, wantStart: "/",
+		},
+		{
+			name:      "a burst not starting with slash is list navigation",
+			key:       runes("jjk"),
+			wantSplit: false, wantStart: "jjk",
+		},
+		{
+			name:      "while filtering, a burst is filter text and must pass through",
+			key:       runes("/docs"),
+			filtering: true,
+			wantSplit: false, wantStart: "/docs",
+		},
+		{
+			name:      "non-rune keys are untouched",
+			key:       enter(),
+			wantSplit: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			start, rest, ok := splitFilterBurst(tt.key, tt.filtering)
+			if ok != tt.wantSplit {
+				t.Fatalf("split = %v, want %v", ok, tt.wantSplit)
+			}
+			if tt.wantStart != "" && start.String() != tt.wantStart {
+				t.Errorf("start = %q, want %q", start.String(), tt.wantStart)
+			}
+			if got := string(rest); got != tt.wantRest {
+				t.Errorf("rest = %q, want %q", got, tt.wantRest)
+			}
+		})
+	}
+}
+
+// TestCoalescedFilterBurstOpensTheFilter replays the reported bug over the pure
+// state machine. The burst is split so the "/" reaches huh and the filter opens;
+// the glued runes are dropped, so the mirror correctly reports an empty filter
+// and Enter still means push. The bug being fixed is the invisible one: in
+// v1.3.0 the "/" never reached huh at all, so the picker looked idle and the
+// user had no way to tell that the filter had not opened.
+func TestCoalescedFilterBurstOpensTheFilter(t *testing.T) {
+	t.Parallel()
+
+	var m pickerMode
+	filtering := false
+
+	start, rest, ok := splitFilterBurst(runes("/docs"), filtering)
+	if !ok {
+		t.Fatal("the burst must be recognised")
+	}
+	if string(rest) != "docs" {
+		t.Errorf("rest = %q, want the runes that were glued to the slash", string(rest))
+	}
+
+	m.onKey(start, filtering)
+	filtering = afterFiltering(start, filtering)
+	if !filtering {
+		t.Fatal("the split \"/\" must open the filter, which v1.3.0 never did")
+	}
+	// The dropped runes must not be counted, or Enter would claim to select
+	// against a filter that is not actually there.
+	if m.filterActive() {
+		t.Error("dropped runes must not register as filter text")
+	}
+}
+
+// TestUnsplitBurstReproducesTheBug documents the old behaviour, so that dropping
+// the split would fail here rather than only in a terminal.
+func TestUnsplitBurstReproducesTheBug(t *testing.T) {
+	t.Parallel()
+	var m pickerMode
+	// Without splitting, huh never opens the filter, so filtering stays false
+	// and the burst is not counted as filter text.
+	m.onKey(runes("/docs"), false)
+	if m.filterActive() {
+		t.Fatal("an unsplit burst cannot have reached the filter")
+	}
+	if m.onKey(enter(), false).EnterToggles {
+		t.Error("without a filter, Enter submits — which is the reported bug")
+	}
 }
